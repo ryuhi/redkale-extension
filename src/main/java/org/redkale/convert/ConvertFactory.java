@@ -11,6 +11,7 @@ import java.math.*;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.CompletionHandler;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.*;
@@ -102,6 +103,7 @@ public abstract class ConvertFactory<R extends Reader, W extends Writer> {
             this.register(URL.class, URLSimpledCoder.instance);
             this.register(URI.class, URISimpledCoder.instance);
             //---------------------------------------------------------
+            this.register(LocalDateTime.class, LocalDateTimeSimpledCoder.instance);
             this.register(ByteBuffer.class, ByteBufferSimpledCoder.instance);
             this.register(boolean[].class, BoolArraySimpledCoder.instance);
             this.register(byte[].class, ByteArraySimpledCoder.instance);
