@@ -73,7 +73,7 @@ public abstract class WebSocketServlet extends HttpServlet implements Resourcabl
     protected int wsmaxconns = 0;
 
     //同RestWebSocket.wsmaxbody
-    protected int wsmaxbody = 16 * 1024;
+    protected int wsmaxbody = 32 * 1024;
 
     //同RestWebSocket.anyuser
     protected boolean anyuser = false;
@@ -99,7 +99,7 @@ public abstract class WebSocketServlet extends HttpServlet implements Resourcabl
             for (Method method : this.getClass().getDeclaredMethods()) {
                 if (!method.getName().equals("createWebSocket")) continue;
                 if (method.getParameterCount() > 0) continue;
-                Type rt = method.getGenericReturnType();
+                Type rt = TypeToken.getGenericType(method.getGenericReturnType(), this.getClass());
                 if (rt instanceof ParameterizedType) {
                     msgtype = ((ParameterizedType) rt).getActualTypeArguments()[1];
                 }
@@ -123,6 +123,7 @@ public abstract class WebSocketServlet extends HttpServlet implements Resourcabl
             this.node = new WebSocketNodeService();
             if (logger.isLoggable(Level.WARNING)) logger.warning("Not found WebSocketNode, create a default value for " + getClass().getName());
         }
+        if (this.node.sendConvert == null) this.node.sendConvert = this.sendConvert;
 
         //存在WebSocketServlet，则此WebSocketNode必须是本地模式Service
         this.node.localEngine = new WebSocketEngine("WebSocketEngine-" + addr.getHostString() + ":" + addr.getPort() + "-[" + resourceName() + "]",
@@ -218,7 +219,7 @@ public abstract class WebSocketServlet extends HttpServlet implements Resourcabl
                                 temprunner = null;
                                 webSocket._userid = userid;
                                 if (single && !anyuser) {
-                                    WebSocketServlet.this.node.existsWebSocket(userid).whenComplete((rs, ex) -> {
+                                    WebSocketServlet.this.node.existsWebSocket(userid).whenComplete((rs, nex) -> {
                                         if (rs) webSocket.onSingleRepeatConnect();
                                         WebSocketServlet.this.node.localEngine.add(webSocket);
                                         WebSocketRunner runner = new WebSocketRunner(context, webSocket, restMessageConsumer, response.removeChannel());

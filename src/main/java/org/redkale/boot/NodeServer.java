@@ -90,8 +90,8 @@ public abstract class NodeServer {
 
     public NodeServer(Application application, Server server) {
         this.application = application;
-        this.resourceFactory = application.getResourceFactory().createChild();
         this.server = server;
+        this.resourceFactory = server.getResourceFactory();
         this.logger = Logger.getLogger(this.getClass().getSimpleName());
         this.serverClassLoader = new RedkaleClassLoader(application.getServerClassLoader());
         Thread.currentThread().setContextClassLoader(this.serverClassLoader);
@@ -135,11 +135,15 @@ public abstract class NodeServer {
             resourceFactory.register(Server.RESNAME_SERVER_ROOT, Path.class, myroot.toPath());
 
             //加入指定的classpath
-            Server.loadLib(serverClassLoader, logger, this.serverConf.getValue("lib", "").replace("${APP_HOME}", application.getHome().getPath().replace('\\', '/')));
+            Server.loadLib(serverClassLoader, logger, this.serverConf.getValue("lib", ""));
             this.serverThread.setContextClassLoader(this.serverClassLoader);
         }
         //必须要进行初始化， 构建Service时需要使用Context中的ExecutorService
         server.init(this.serverConf);
+        //init之后才有Executor
+        resourceFactory.register(Server.RESNAME_SERVER_EXECUTOR, Executor.class, server.getExecutor());
+        resourceFactory.register(Server.RESNAME_SERVER_EXECUTOR, ExecutorService.class, server.getExecutor());
+        resourceFactory.register(Server.RESNAME_SERVER_EXECUTOR, ThreadPoolExecutor.class, server.getExecutor());
 
         initResource(); //给 DataSource、CacheSource 注册依赖注入时的监听回调事件。
         String interceptorClass = this.serverConf.getValue("interceptor", "");

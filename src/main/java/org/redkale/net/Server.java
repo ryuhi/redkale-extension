@@ -13,6 +13,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
+import javax.net.ssl.SSLContext;
 import org.redkale.util.*;
 
 /**
@@ -31,6 +32,8 @@ public abstract class Server<K extends Serializable, C extends Context, R extend
 
     public static final String RESNAME_SERVER_ROOT = "SERVER_ROOT";
 
+    public static final String RESNAME_SERVER_EXECUTOR = "SERVER_EXECUTOR";
+
     protected final Logger logger = Logger.getLogger(this.getClass().getSimpleName());
 
     //-------------------------------------------------------------
@@ -43,8 +46,14 @@ public abstract class Server<K extends Serializable, C extends Context, R extend
     //应用层协议名
     protected final String protocol;
 
+    //依赖注入工厂类
+    protected final ResourceFactory resourceFactory;
+
     //服务的根Servlet
     protected final PrepareServlet<K, C, R, P, S> prepare;
+
+    //SSL
+    protected SSLContext sslContext;
 
     //服务的上下文对象
     protected C context;
@@ -90,10 +99,11 @@ public abstract class Server<K extends Serializable, C extends Context, R extend
 
     //最大连接数
     protected int maxconns;
-    
-    protected Server(long serverStartTime, String protocol, PrepareServlet<K, C, R, P, S> servlet) {
+
+    protected Server(long serverStartTime, String protocol, ResourceFactory resourceFactory, PrepareServlet<K, C, R, P, S> servlet) {
         this.serverStartTime = serverStartTime;
         this.protocol = protocol;
+        this.resourceFactory = resourceFactory;
         this.prepare = servlet;
     }
 
@@ -105,13 +115,13 @@ public abstract class Server<K extends Serializable, C extends Context, R extend
         this.maxconns = config.getIntValue("maxconns", 0);
         this.readTimeoutSecond = config.getIntValue("readTimeoutSecond", 0);
         this.writeTimeoutSecond = config.getIntValue("writeTimeoutSecond", 0);
-        this.backlog = parseLenth(config.getValue("backlog"), 8 * 1024);
+        this.backlog = parseLenth(config.getValue("backlog"), 16 * 1024);
         this.maxbody = parseLenth(config.getValue("maxbody"), 64 * 1024);
-        int bufCapacity = parseLenth(config.getValue("bufferCapacity"), 8 * 1024);
-        this.bufferCapacity = bufCapacity < 256 ? 256 : bufCapacity;
-        this.threads = config.getIntValue("threads", Runtime.getRuntime().availableProcessors() * 16);
-        this.bufferPoolSize = config.getIntValue("bufferPoolSize", Runtime.getRuntime().availableProcessors() * 512);
-        this.responsePoolSize = config.getIntValue("responsePoolSize", Runtime.getRuntime().availableProcessors() * 256);
+        int bufCapacity = parseLenth(config.getValue("bufferCapacity"), 32 * 1024);
+        this.bufferCapacity = bufCapacity < 8 * 1024 ? 8 * 1024 : bufCapacity;
+        this.threads = config.getIntValue("threads", Runtime.getRuntime().availableProcessors() * 8);
+        this.bufferPoolSize = config.getIntValue("bufferPoolSize", this.threads * 4);
+        this.responsePoolSize = config.getIntValue("responsePoolSize", this.threads * 2);
         this.name = config.getValue("name", "Server-" + protocol + "-" + this.address.getPort());
         if (!this.name.matches("^[a-zA-Z][\\w_-]{1,64}$")) throw new RuntimeException("server.name (" + this.name + ") is illegal");
         final AtomicInteger counter = new AtomicInteger();
@@ -144,6 +154,14 @@ public abstract class Server<K extends Serializable, C extends Context, R extend
 
     public void destroy(final AnyValue config) throws Exception {
         this.prepare.destroy(context, config);
+    }
+
+    public ResourceFactory getResourceFactory() {
+        return resourceFactory;
+    }
+
+    public ThreadPoolExecutor getExecutor() {
+        return executor;
     }
 
     public InetSocketAddress getSocketAddress() {
@@ -192,10 +210,10 @@ public abstract class Server<K extends Serializable, C extends Context, R extend
         }
         serverChannel.bind(address, backlog);
         serverChannel.setMaxconns(this.maxconns);
-        serverChannel.accept(); 
+        serverChannel.accept();
         final String threadName = "[" + Thread.currentThread().getName() + "] ";
         logger.info(threadName + this.getClass().getSimpleName() + ("TCP".equalsIgnoreCase(protocol) ? "" : ("." + protocol)) + " listen: " + address
-            + ", threads: " + threads + ", bufferCapacity: " + bufferCapacity + ", bufferPoolSize: " + bufferPoolSize + ", responsePoolSize: " + responsePoolSize
+            + ", threads: " + threads + ", bufferCapacity: " + bufferCapacity / 1024 + "K, bufferPoolSize: " + bufferPoolSize + ", responsePoolSize: " + responsePoolSize
             + ", started in " + (System.currentTimeMillis() - context.getServerStartTime()) + " ms");
     }
 

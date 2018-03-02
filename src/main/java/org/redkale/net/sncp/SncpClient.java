@@ -215,9 +215,8 @@ public final class SncpClient {
 
         for (final java.lang.reflect.Method method : serviceClass.getMethods()) {
             if (method.isSynthetic()) continue;
-            final int mod = method.getModifiers();
-            if (Modifier.isStatic(mod)) continue;
-            if (Modifier.isFinal(mod)) continue;
+            if (Modifier.isStatic(method.getModifiers())) continue;
+            if (Modifier.isFinal(method.getModifiers())) continue;
             if (method.getAnnotation(Local.class) != null) continue;
             if (method.getName().equals("getClass") || method.getName().equals("toString")) continue;
             if (method.getName().equals("equals") || method.getName().equals("hashCode")) continue;
@@ -550,15 +549,11 @@ public final class SncpClient {
 
         public SncpAction(final Class clazz, Method method, DLong actionid) {
             this.actionid = actionid == null ? Sncp.hash(method) : actionid;
-            Type rt = method.getGenericReturnType();
-            if (rt instanceof TypeVariable) {
-                TypeVariable tv = (TypeVariable) rt;
-                if (tv.getBounds().length == 1) rt = tv.getBounds()[0];
-            }
+            Type rt = TypeToken.getGenericType(method.getGenericReturnType(), clazz);
             this.resultTypes = rt == void.class ? null : rt;
             this.boolReturnTypeFuture = CompletableFuture.class.isAssignableFrom(method.getReturnType());
             this.futureCreator = boolReturnTypeFuture ? Creator.create((Class<? extends CompletableFuture>) method.getReturnType()) : null;
-            this.paramTypes = method.getGenericParameterTypes();
+            this.paramTypes = TypeToken.getGenericType(method.getGenericParameterTypes(), clazz);
             this.paramClass = method.getParameterTypes();
             this.method = method;
             Annotation[][] anns = method.getParameterAnnotations();

@@ -18,6 +18,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import java.util.logging.*;
 import javax.annotation.Resource;
+import javax.net.ssl.SSLContext;
 import javax.xml.parsers.*;
 import org.redkale.boot.ClassFilter.FilterEntry;
 import org.redkale.convert.Convert;
@@ -43,8 +44,6 @@ import org.w3c.dom.*;
  *     3、优先加载所有SNCP协议的服务，再加载其他协议服务， 最后加载WATCH协议的服务
  *     4、最后进行Service、Servlet与其他资源之间的依赖注入
  * </pre>
- * <p>
- * 编译时需要加入: -XDignore.symbol.file=true
  * <p>
  * 详情见: https://redkale.org
  *
@@ -91,6 +90,11 @@ public final class Application {
      * "SERVER_ROOT" 当前Server的ROOT目录类型：String、File、Path
      */
     public static final String RESNAME_SERVER_ROOT = Server.RESNAME_SERVER_ROOT;
+
+    /**
+     * 当前Server的线程池
+     */
+    public static final String RESNAME_SERVER_EXECUTOR = Server.RESNAME_SERVER_EXECUTOR;
 
     //本地IP地址
     final InetAddress localAddress;
@@ -243,8 +247,8 @@ public final class Application {
         AsynchronousChannelGroup transportGroup = null;
         final AnyValue resources = config.getAnyValue("resources");
         TransportStrategy strategy = null;
-        int bufferCapacity = 8 * 1024;
-        int bufferPoolSize = Runtime.getRuntime().availableProcessors() * 16;
+        int bufferCapacity = 32 * 1024;
+        int bufferPoolSize = Runtime.getRuntime().availableProcessors() * 8;
         int readTimeoutSecond = TransportFactory.DEFAULT_READTIMEOUTSECOND;
         int writeTimeoutSecond = TransportFactory.DEFAULT_WRITETIMEOUTSECOND;
         AtomicLong createBufferCounter = new AtomicLong();
@@ -255,11 +259,11 @@ public final class Application {
             if (groupsize > 0 && transportConf == null) transportConf = new DefaultAnyValue();
             if (transportConf != null) {
                 //--------------transportBufferPool-----------
-                bufferCapacity = Math.max(parseLenth(transportConf.getValue("bufferCapacity"), bufferCapacity), 4 * 1024);
-                bufferPoolSize = parseLenth(transportConf.getValue("bufferPoolSize"), groupsize * Runtime.getRuntime().availableProcessors() * 8);
+                bufferCapacity = Math.max(parseLenth(transportConf.getValue("bufferCapacity"), bufferCapacity), 8 * 1024);
                 readTimeoutSecond = transportConf.getIntValue("readTimeoutSecond", readTimeoutSecond);
                 writeTimeoutSecond = transportConf.getIntValue("writeTimeoutSecond", writeTimeoutSecond);
-                final int threads = parseLenth(transportConf.getValue("threads"), groupsize * Runtime.getRuntime().availableProcessors() * 8);
+                final int threads = parseLenth(transportConf.getValue("threads"), groupsize * Runtime.getRuntime().availableProcessors() * 2);
+                bufferPoolSize = parseLenth(transportConf.getValue("bufferPoolSize"), threads * 4);
                 final int capacity = bufferCapacity;
                 transportPool = new ObjectPool<>(createBufferCounter, cycleBufferCounter, bufferPoolSize,
                     (Object... params) -> ByteBuffer.allocateDirect(capacity), null, (e) -> {
@@ -284,7 +288,7 @@ public final class Application {
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
-                logger.log(Level.INFO, Transport.class.getSimpleName() + " configure bufferCapacity = " + bufferCapacity + "; bufferPoolSize = " + bufferPoolSize + "; threads = " + threads + ";");
+                logger.log(Level.INFO, Transport.class.getSimpleName() + " configure bufferCapacity = " + bufferCapacity / 1024 + "K; bufferPoolSize = " + bufferPoolSize + "; threads = " + threads + ";");
             }
         }
         if (transportGroup == null) {
@@ -310,7 +314,7 @@ public final class Application {
                     return true;
                 });
         }
-        this.sncpTransportFactory = TransportFactory.create(transportExec, transportPool, transportGroup, readTimeoutSecond, writeTimeoutSecond, strategy);
+        this.sncpTransportFactory = TransportFactory.create(transportExec, transportPool, transportGroup, (SSLContext) null, readTimeoutSecond, writeTimeoutSecond, strategy);
         DefaultAnyValue tarnsportConf = DefaultAnyValue.create(TransportFactory.NAME_PINGINTERVAL, System.getProperty("net.transport.pinginterval", "30"));
         this.sncpTransportFactory.init(tarnsportConf, Sncp.PING_BUFFER, Sncp.PONG_BUFFER.remaining());
         Thread.currentThread().setContextClassLoader(this.classLoader);
@@ -351,6 +355,7 @@ public final class Application {
 
     public void init() throws Exception {
         System.setProperty("java.util.concurrent.ForkJoinPool.common.parallelism", "" + Runtime.getRuntime().availableProcessors() * 4);
+        System.setProperty("net.transport.pinginterval", "30");
         System.setProperty("convert.bson.tiny", "true");
         System.setProperty("convert.json.tiny", "true");
         System.setProperty("convert.bson.pool.size", "128");
@@ -376,7 +381,6 @@ public final class Application {
                 if (dfloads != null) {
                     for (String dfload : dfloads.split(";")) {
                         if (dfload.trim().isEmpty()) continue;
-                        dfload = dfload.trim().replace("${APP_HOME}", home.getCanonicalPath()).replace('\\', '/');
                         final File df = (dfload.indexOf('/') < 0) ? new File(home, "conf/" + dfload) : new File(dfload);
                         if (df.isFile()) {
                             Properties ps = new Properties();
@@ -391,7 +395,6 @@ public final class Application {
                     String name = prop.getValue("name");
                     String value = prop.getValue("value");
                     if (name == null || value == null) continue;
-                    value = value.replace("${APP_HOME}", home.getCanonicalPath()).replace('\\', '/');
                     if (name.startsWith("system.property.")) {
                         System.setProperty(name.substring("system.property.".length()), value);
                     } else if (name.startsWith("mimetype.property.")) {
@@ -497,7 +500,7 @@ public final class Application {
             for (AnyValue conf : resources.getAnyValues("listener")) {
                 final String listenClass = conf.getValue("value", "");
                 if (listenClass.isEmpty()) continue;
-                Class clazz = Class.forName(listenClass);
+                Class clazz = classLoader.loadClass(listenClass);
                 if (!ApplicationListener.class.isAssignableFrom(clazz)) continue;
                 ApplicationListener listener = (ApplicationListener) clazz.newInstance();
                 listener.init(config);
@@ -779,7 +782,7 @@ public final class Application {
     }
 
     public static Application create(final boolean singleton) throws IOException {
-        final String home = new File(System.getProperty(RESNAME_APP_HOME, "")).getCanonicalPath();
+        final String home = new File(System.getProperty(RESNAME_APP_HOME, "")).getCanonicalPath().replace('\\', '/');
         System.setProperty(RESNAME_APP_HOME, home);
         File appfile = new File(home, "conf/application.xml");
         return new Application(singleton, load(new FileInputStream(appfile)));

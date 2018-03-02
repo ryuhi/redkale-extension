@@ -48,8 +48,8 @@ public abstract class WebSocketNode {
     @RpcRemote
     protected WebSocketNode remoteNode;
 
-    @Resource(name = "$_textconvert")
-    protected Convert textConvert;
+    @Resource(name = "$_sendconvert")
+    protected Convert sendConvert;
 
     //存放所有用户分布在节点上的队列信息,Set<InetSocketAddress> 为 sncpnode 的集合， key: groupid
     //集合包含 localSncpAddress
@@ -80,7 +80,7 @@ public abstract class WebSocketNode {
 
     protected abstract CompletableFuture<Integer> sendMessage(@RpcTargetAddress InetSocketAddress targetAddress, Object message, boolean last, Serializable userid);
 
-    protected abstract CompletableFuture<Integer> broadcastMessage(@RpcTargetAddress InetSocketAddress targetAddress, Object message, boolean last);
+    protected abstract CompletableFuture<Integer> broadcastMessage(@RpcTargetAddress InetSocketAddress targetAddress, WebSocketRange wsrange, Object message, boolean last);
 
     protected abstract CompletableFuture<Void> connect(Serializable userid, InetSocketAddress addr);
 
@@ -354,10 +354,11 @@ public abstract class WebSocketNode {
         if (this.localEngine != null && this.sncpNodeAddresses == null) { //本地模式且没有分布式
             return this.localEngine.sendMessage(message, last, userids);
         }
+        final Object remoteMessage = formatRemoteMessage(message0);
         CompletableFuture<Integer> future = null;
         for (Serializable userid : userids) {
-            future = future == null ? sendOneMessage(message, last, userid)
-                : future.thenCombine(sendOneMessage(message, last, userid), (a, b) -> a | b);
+            future = future == null ? sendOneMessage(remoteMessage, last, userid)
+                : future.thenCombine(sendOneMessage(remoteMessage, last, userid), (a, b) -> a | b);
         }
         return future == null ? CompletableFuture.completedFuture(RETCODE_GROUP_EMPTY) : future;
     }
@@ -376,6 +377,18 @@ public abstract class WebSocketNode {
     /**
      * 广播消息， 给所有人发消息
      *
+     * @param wsrange 过滤条件
+     * @param message 消息内容
+     *
+     * @return 为0表示成功， 其他值表示部分发送异常
+     */
+    public final CompletableFuture<Integer> broadcastMessage(final WebSocketRange wsrange, final Object message) {
+        return broadcastMessage(wsrange, (Convert) null, message, true);
+    }
+
+    /**
+     * 广播消息， 给所有人发消息
+     *
      * @param convert Convert
      * @param message 消息内容
      *
@@ -383,6 +396,19 @@ public abstract class WebSocketNode {
      */
     public final CompletableFuture<Integer> broadcastMessage(final Convert convert, final Object message) {
         return broadcastMessage(convert, message, true);
+    }
+
+    /**
+     * 广播消息， 给所有人发消息
+     *
+     * @param wsrange 过滤条件
+     * @param convert Convert
+     * @param message 消息内容
+     *
+     * @return 为0表示成功， 其他值表示部分发送异常
+     */
+    public final CompletableFuture<Integer> broadcastMessage(final WebSocketRange wsrange, final Convert convert, final Object message) {
+        return broadcastMessage(wsrange, convert, message, true);
     }
 
     /**
@@ -400,6 +426,19 @@ public abstract class WebSocketNode {
     /**
      * 广播消息， 给所有人发消息
      *
+     * @param wsrange 过滤条件
+     * @param message 消息内容
+     * @param last    是否最后一条
+     *
+     * @return 为0表示成功， 其他值表示部分发送异常
+     */
+    public final CompletableFuture<Integer> broadcastMessage(final WebSocketRange wsrange, final Object message, final boolean last) {
+        return broadcastMessage(wsrange, (Convert) null, message, last);
+    }
+
+    /**
+     * 广播消息， 给所有人发消息
+     *
      * @param convert  Convert
      * @param message0 消息内容
      * @param last     是否最后一条
@@ -407,22 +446,36 @@ public abstract class WebSocketNode {
      * @return 为0表示成功， 其他值表示部分发送异常
      */
     public final CompletableFuture<Integer> broadcastMessage(final Convert convert, final Object message0, final boolean last) {
-        if (message0 instanceof CompletableFuture) return ((CompletableFuture) message0).thenApply(msg -> broadcastMessage(convert, msg, last));
+        return broadcastMessage((WebSocketRange) null, convert, message0, last);
+    }
+
+    /**
+     * 广播消息， 给所有人发消息
+     *
+     * @param wsrange  过滤条件
+     * @param convert  Convert
+     * @param message0 消息内容
+     * @param last     是否最后一条
+     *
+     * @return 为0表示成功， 其他值表示部分发送异常
+     */
+    public final CompletableFuture<Integer> broadcastMessage(final WebSocketRange wsrange, final Convert convert, final Object message0, final boolean last) {
+        if (message0 instanceof CompletableFuture) return ((CompletableFuture) message0).thenApply(msg -> broadcastMessage(wsrange, convert, msg, last));
         final Object message = (convert == null || message0 instanceof WebSocketPacket) ? message0 : ((convert instanceof TextConvert) ? new WebSocketPacket(((TextConvert) convert).convertTo(message0), last) : new WebSocketPacket(((BinaryConvert) convert).convertTo(message0), last));
         if (this.localEngine != null && this.sncpNodeAddresses == null) { //本地模式且没有分布式
-            return this.localEngine.broadcastMessage(message, last);
+            return this.localEngine.broadcastMessage(wsrange, message, last);
         }
-        CompletableFuture<Integer> localFuture = this.localEngine == null ? null : this.localEngine.broadcastMessage(message, last);
+        final Object remoteMessage = formatRemoteMessage(message);
+        CompletableFuture<Integer> localFuture = this.localEngine == null ? null : this.localEngine.broadcastMessage(wsrange, message, last);
         CompletableFuture<Collection<InetSocketAddress>> addrsFuture = sncpNodeAddresses.getCollectionAsync(SOURCE_SNCP_ADDRS_KEY);
         CompletableFuture<Integer> remoteFuture = addrsFuture.thenCompose((Collection<InetSocketAddress> addrs) -> {
-            if (logger.isLoggable(Level.FINEST)) logger.finest("websocket broadcast message on " + addrs);
+            if (logger.isLoggable(Level.FINEST)) logger.finest("websocket broadcast message (" + remoteMessage + ") on " + addrs);
             if (addrs == null || addrs.isEmpty()) return CompletableFuture.completedFuture(0);
             CompletableFuture<Integer> future = null;
-            Object remoteMessage = formatRemoteMessage(message);
             for (InetSocketAddress addr : addrs) {
                 if (addr == null || addr.equals(localSncpAddress)) continue;
-                future = future == null ? remoteNode.broadcastMessage(addr, remoteMessage, last)
-                    : future.thenCombine(remoteNode.broadcastMessage(addr, remoteMessage, last), (a, b) -> a | b);
+                future = future == null ? remoteNode.broadcastMessage(addr, wsrange, remoteMessage, last)
+                    : future.thenCombine(remoteNode.broadcastMessage(addr, wsrange, remoteMessage, last), (a, b) -> a | b);
             }
             return future == null ? CompletableFuture.completedFuture(0) : future;
         });
@@ -440,6 +493,7 @@ public abstract class WebSocketNode {
             return localFuture == null ? CompletableFuture.completedFuture(RETCODE_GROUP_EMPTY) : localFuture;
         }
         //远程节点发送消息
+        final Object remoteMessage = formatRemoteMessage(message);
         CompletableFuture<Collection<InetSocketAddress>> addrsFuture = sncpNodeAddresses.getCollectionAsync(SOURCE_SNCP_USERID_PREFIX + userid);
         CompletableFuture<Integer> remoteFuture = addrsFuture.thenCompose((Collection<InetSocketAddress> addrs) -> {
             if (addrs == null || addrs.isEmpty()) {
@@ -448,7 +502,6 @@ public abstract class WebSocketNode {
             }
             if (logger.isLoggable(Level.FINEST)) logger.finest("websocket(localaddr=" + localSncpAddress + ") found userid:" + userid + " on " + addrs);
             CompletableFuture<Integer> future = null;
-            Object remoteMessage = formatRemoteMessage(message);
             for (InetSocketAddress addr : addrs) {
                 if (addr == null || addr.equals(localSncpAddress)) continue;
                 future = future == null ? remoteNode.sendMessage(addr, remoteMessage, last, userid)
@@ -463,7 +516,8 @@ public abstract class WebSocketNode {
         if (message instanceof WebSocketPacket) return message;
         if (message instanceof byte[]) return message;
         if (message instanceof CharSequence) return message;
-        if (textConvert != null) return ((TextConvert) textConvert).convertTo(message);
+        if (sendConvert instanceof TextConvert) ((TextConvert) sendConvert).convertTo(message);
+        if (sendConvert instanceof BinaryConvert) ((BinaryConvert) sendConvert).convertTo(message);
         return JsonConvert.root().convertTo(message);
     }
 }

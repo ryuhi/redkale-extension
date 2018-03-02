@@ -40,13 +40,15 @@ class WebSocketRunner implements Runnable {
 
     volatile boolean closed = false;
 
-    private AtomicBoolean writing = new AtomicBoolean();
+    private final AtomicBoolean writing = new AtomicBoolean();
 
     private final BlockingQueue<QueueEntry> queue = new ArrayBlockingQueue(1024);
 
     private final BiConsumer<WebSocket, Object> restMessageConsumer;  //主要供RestWebSocket使用
 
     protected long lastSendTime;
+    
+    protected long lastReadTime;
 
     WebSocketRunner(Context context, WebSocket webSocket, BiConsumer<WebSocket, Object> messageConsumer, AsyncConnection channel) {
         this.context = context;
@@ -59,7 +61,7 @@ class WebSocketRunner implements Runnable {
 
     @Override
     public void run() {
-        final boolean debug = true;
+        final boolean debug = context.getLogger().isLoggable(Level.FINEST);
         try {
             webSocket.onConnected();
             channel.setReadTimeoutSecond(300); //读取超时5分钟
@@ -78,11 +80,12 @@ class WebSocketRunner implements Runnable {
                     @Override
                     public void completed(Integer count, Void attachment1) {
                         if (count < 1) {
-                            closeRunner(0);
                             if (debug) context.getLogger().log(Level.FINEST, "WebSocketRunner abort on read buffer count, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds");
+                            closeRunner(0, "read buffer count is " + count);
                             return;
                         }
                         if (readBuffer == null) return;
+                        lastReadTime = System.currentTimeMillis();
                         readBuffer.flip();
 
                         WebSocketPacket onePacket = null;
@@ -133,10 +136,11 @@ class WebSocketRunner implements Runnable {
                         //消息处理
                         for (final WebSocketPacket packet : packets) {
                             if (packet == null) {
-                                failed(null, attachment1);
                                 if (debug) context.getLogger().log(Level.FINEST, "WebSocketRunner abort on decode WebSocketPacket, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds");
+                                failed(null, attachment1);
                                 return;
                             }
+
                             if (packet.type == FrameType.TEXT) {
                                 try {
                                     if (packet.receiveType == WebSocketPacket.MessageType.STRING) {
@@ -148,7 +152,7 @@ class WebSocketRunner implements Runnable {
                                             webSocket.onMessage(packet.receiveMessage, packet.last);
                                         }
                                     }
-                                } catch (Exception e) {
+                                } catch (Throwable e) {
                                     context.getLogger().log(Level.SEVERE, "WebSocket onTextMessage error (" + packet + ")", e);
                                 }
                             } else if (packet.type == FrameType.BINARY) {
@@ -162,7 +166,7 @@ class WebSocketRunner implements Runnable {
                                             webSocket.onMessage(packet.receiveMessage, packet.last);
                                         }
                                     }
-                                } catch (Exception e) {
+                                } catch (Throwable e) {
                                     context.getLogger().log(Level.SEVERE, "WebSocket onBinaryMessage error (" + packet + ")", e);
                                 }
                             } else if (packet.type == FrameType.PING) {
@@ -173,193 +177,57 @@ class WebSocketRunner implements Runnable {
                                 }
                             } else if (packet.type == FrameType.PONG) {
                                 try {
+                                    if (debug) context.getLogger().log(Level.FINEST, "WebSocketRunner onMessage by PONG FrameType : " + packet);
                                     webSocket.onPong((byte[]) packet.receiveMessage);
                                 } catch (Exception e) {
                                     context.getLogger().log(Level.SEVERE, "WebSocket onPong error (" + packet + ")", e);
                                 }
                             } else if (packet.type == FrameType.CLOSE) {
-                                Logger logger = context.getLogger();
-                                if (logger.isLoggable(Level.FINEST)) logger.log(Level.FINEST, "WebSocketRunner onMessage by CLOSE FrameType : " + packet);
-                                closeRunner(0);
+                                if (debug) context.getLogger().log(Level.FINEST, "WebSocketRunner onMessage by CLOSE FrameType : " + packet);
+                                closeRunner(0, "received CLOSE frame-type message");
                                 return;
                             } else {
                                 context.getLogger().log(Level.WARNING, "WebSocketRunner onMessage by unknown FrameType : " + packet);
-                                closeRunner(0);
+                                closeRunner(0, "received unknown frame-type message");
                                 return;
                             }
                         }
-//                        if (true) return; //以下代码废弃
-//                        try {
-//                            WebSocketPacket packet;
-//                            try {
-//                                packet = new WebSocketPacket().decode(context.getLogger(), readBuffer, exBuffers);
-//                            } catch (Exception e) { //接收的消息体解析失败
-//                                webSocket.onOccurException(e, Utility.append(new ByteBuffer[]{readBuffer}, exBuffers == null ? new ByteBuffer[0] : exBuffers));
-//                                if (readBuffer != null) {
-//                                    readBuffer.clear();
-//                                    channel.read(readBuffer, null, this);
-//                                }
-//                                return;
-//                            }
-//                            if (packet == null) {
-//                                failed(null, attachment1);
-//                                if (debug) context.getLogger().log(Level.FINEST, "WebSocketRunner abort on decode WebSocketPacket, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds");
-//                                return;
-//                            }
-//
-//                            if (packet.type == FrameType.TEXT) {
-//                                Convert textConvert = webSocket.getTextConvert();
-//                                if (textConvert == null) {
-//                                    byte[] message = packet.getReceiveBytes();
-//                                    if (readBuffer != null) {
-//                                        readBuffer.clear();
-//                                        channel.read(readBuffer, null, this);
-//                                    }
-//                                    try {
-//                                        webSocket.onMessage(new String(message, "UTF-8"), packet.last);
-//                                    } catch (Exception e) {
-//                                        context.getLogger().log(Level.SEVERE, "WebSocket onBinaryMessage error (" + packet + ")", e);
-//                                    }
-//                                } else {
-//                                    Object message;
-//                                    try {
-//                                        message = textConvert.convertFrom(webSocket._messageTextType, packet.receiveMasker, packet.receiveBuffers);
-//                                    } catch (Exception e) { //接收的消息体解析失败
-//                                        webSocket.onOccurException(e, packet.receiveBuffers);
-//                                        if (readBuffer != null) {
-//                                            readBuffer.clear();
-//                                            channel.read(readBuffer, null, this);
-//                                        }
-//                                        return;
-//                                    }
-//                                    if (readBuffer != null) {
-//                                        readBuffer.clear();
-//                                        channel.read(readBuffer, null, this);
-//                                    }
-//                                    try {
-//                                        if (restMessageConsumer != null) { //主要供RestWebSocket使用
-//                                            restMessageConsumer.accept(webSocket, message);
-//                                        } else {
-//                                            webSocket.onMessage(message, packet.last);
-//                                        }
-//                                    } catch (Exception e) {
-//                                        context.getLogger().log(Level.SEVERE, "WebSocket onTextMessage error (" + packet + ")", e);
-//                                    }
-//                                }
-//                            } else if (packet.type == FrameType.BINARY) {
-//                                Convert binaryConvert = webSocket.getBinaryConvert();
-//                                if (binaryConvert == null) {
-//                                    byte[] message = packet.getReceiveBytes();
-//                                    if (readBuffer != null) {
-//                                        readBuffer.clear();
-//                                        channel.read(readBuffer, null, this);
-//                                    }
-//                                    try {
-//                                        webSocket.onMessage(message, packet.last);
-//                                    } catch (Exception e) {
-//                                        context.getLogger().log(Level.SEVERE, "WebSocket onBinaryMessage error (" + packet + ")", e);
-//                                    }
-//                                } else {
-//                                    Object message;
-//                                    try {
-//                                        message = binaryConvert.convertFrom(webSocket._messageTextType, packet.receiveMasker, packet.receiveBuffers);
-//                                    } catch (Exception e) {  //接收的消息体解析失败
-//                                        webSocket.onOccurException(e, packet.receiveBuffers);
-//                                        if (readBuffer != null) {
-//                                            readBuffer.clear();
-//                                            channel.read(readBuffer, null, this);
-//                                        }
-//                                        return;
-//                                    }
-//                                    if (readBuffer != null) {
-//                                        readBuffer.clear();
-//                                        channel.read(readBuffer, null, this);
-//                                    }
-//                                    try {
-//                                        if (restMessageConsumer != null) { //主要供RestWebSocket使用
-//                                            restMessageConsumer.accept(webSocket, message);
-//                                        } else {
-//                                            webSocket.onMessage(message, packet.last);
-//                                        }
-//                                    } catch (Exception e) {
-//                                        context.getLogger().log(Level.SEVERE, "WebSocket onTextMessage error (" + packet + ")", e);
-//                                    }
-//                                }
-//                            } else if (packet.type == FrameType.PONG) {
-//                                byte[] message = packet.getReceiveBytes();
-//                                if (readBuffer != null) {
-//                                    readBuffer.clear();
-//                                    channel.read(readBuffer, null, this);
-//                                }
-//                                try {
-//                                    webSocket.onPong(message);
-//                                } catch (Exception e) {
-//                                    context.getLogger().log(Level.SEVERE, "WebSocket onPong error (" + packet + ")", e);
-//                                }
-//                            } else if (packet.type == FrameType.PING) {
-//                                byte[] message = packet.getReceiveBytes();
-//                                if (readBuffer != null) {
-//                                    readBuffer.clear();
-//                                    channel.read(readBuffer, null, this);
-//                                }
-//                                try {
-//                                    webSocket.onPing(message);
-//                                } catch (Exception e) {
-//                                    context.getLogger().log(Level.SEVERE, "WebSocket onPing error (" + packet + ")", e);
-//                                }
-//                            } else if (packet.type == FrameType.CLOSE) {
-//                                Logger logger = context.getLogger();
-//                                if (logger.isLoggable(Level.FINEST)) logger.log(Level.FINEST, "WebSocketRunner onMessage by CLOSE FrameType : " + packet);
-//                                closeRunner(0);
-//                            } else {
-//                                context.getLogger().log(Level.WARNING, "WebSocketRunner onMessage by unknown FrameType : " + packet);
-//                                if (readBuffer != null) {
-//                                    readBuffer.clear();
-//                                    channel.read(readBuffer, null, this);
-//                                }
-//                            }
-//                        } catch (Throwable t) {
-//                            closeRunner(0);
-//                            if (debug) context.getLogger().log(Level.FINEST, "WebSocketRunner abort on read WebSocketPacket, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds", t);
-//                        } finally {
-//                            if (exBuffers != null) {
-//                                for (ByteBuffer b : exBuffers) {
-//                                    context.offerBuffer(b);
-//                                }
-//                            }
-//                        }
                     }
 
                     @Override
                     public void failed(Throwable exc, Void attachment2) {
-                        closeRunner(0);
                         if (exc != null) {
-                            context.getLogger().log(Level.FINEST, "WebSocketRunner read WebSocketPacket failed, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds", exc);
+                            if (debug) context.getLogger().log(Level.FINEST, "WebSocketRunner read WebSocketPacket failed, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds", exc);
+                            closeRunner(0, "read websocket-packet failed");
+                        } else {
+                            closeRunner(RETCODE_ILLEGALBUFFER, "decode websocket-packet error");
                         }
                     }
                 });
             } else {
-                closeRunner(0);
-                context.getLogger().log(Level.FINEST, "WebSocketRunner abort by AsyncConnection closed");
+                if (debug) context.getLogger().log(Level.FINEST, "WebSocketRunner abort by AsyncConnection closed");
+                closeRunner(RETCODE_WSOCKET_CLOSED, "webSocket channel is not opened");
             }
-        } catch (Exception e) {
-            closeRunner(0);
-            context.getLogger().log(Level.FINEST, "WebSocketRunner abort on read bytes from channel, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds", e);
+        } catch (Throwable e) {
+            if (debug) context.getLogger().log(Level.FINEST, "WebSocketRunner abort on read bytes from channel, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds", e);
+            closeRunner(0, "read bytes from channel error");
         }
     }
 
     public CompletableFuture<Integer> sendMessage(WebSocketPacket packet) {
         if (packet == null) return CompletableFuture.completedFuture(RETCODE_SEND_ILLPACKET);
         if (closed) return CompletableFuture.completedFuture(RETCODE_WSOCKET_CLOSED);
-        boolean debug = true;
-        //System.out.println("推送消息");
-        //if (debug) context.getLogger().log(Level.FINEST, "send web socket message:  " + packet);
+        boolean debug = context.getLogger().isLoggable(Level.FINEST);
+        //System.out.println("推送消息");        
         final CompletableFuture<Integer> futureResult = new CompletableFuture<>();
-        if (writing.getAndSet(true)) {
-            queue.add(new QueueEntry(futureResult, packet));
-            return futureResult;
+        synchronized (writing) {
+            if (writing.getAndSet(true)) {
+                queue.add(new QueueEntry(futureResult, packet));
+                return futureResult;
+            }
         }
         ByteBuffer[] buffers = packet.sendBuffers != null ? packet.duplicateSendBuffers() : packet.encode(this.context.getBufferSupplier());
+        if (debug) context.getLogger().log(Level.FINEST, "sending websocket message:  " + packet);
         try {
             this.lastSendTime = System.currentTimeMillis();
             channel.write(buffers, buffers, new CompletionHandler<Integer, ByteBuffer[]>() {
@@ -401,33 +269,38 @@ class WebSocketRunner implements Runnable {
                                 }
                             }
                         }
-                        QueueEntry entry = queue.poll();
+                        QueueEntry entry = null;
+                        synchronized (writing) {
+                            entry = queue.poll();
+                            if (entry == null) writing.set(false);
+                        }
                         if (entry != null) {
                             future = entry.future;
                             ByteBuffer[] buffers = entry.packet.sendBuffers != null ? entry.packet.duplicateSendBuffers() : entry.packet.encode(context.getBufferSupplier());
                             lastSendTime = System.currentTimeMillis();
+                            if (debug) context.getLogger().log(Level.FINEST, "sending websocket message:  " + entry.packet);
                             channel.write(buffers, buffers, this);
                         }
                     } catch (Exception e) {
-                        closeRunner(0);
                         context.getLogger().log(Level.WARNING, "WebSocket sendMessage abort on rewrite, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds", e);
+                        closeRunner(RETCODE_SENDEXCEPTION, "websocket send message failed on rewrite");
                     }
-                    writing.set(false);
                 }
 
                 @Override
                 public void failed(Throwable exc, ByteBuffer[] attachments) {
                     writing.set(false);
-                    closeRunner(0);
                     if (exc != null) {
                         context.getLogger().log(Level.FINE, "WebSocket sendMessage on CompletionHandler failed, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds", exc);
                     }
+                    closeRunner(RETCODE_SENDEXCEPTION, "websocket send message failed on CompletionHandler");
+
                 }
             });
         } catch (Exception t) {
             writing.set(false);
-            closeRunner(0);
             context.getLogger().log(Level.FINE, "WebSocket sendMessage abort, force to close channel, live " + (System.currentTimeMillis() - webSocket.getCreatetime()) / 1000 + " seconds", t);
+            closeRunner(RETCODE_SENDEXCEPTION, "websocket send message failed on channel.write");
             futureResult.complete(RETCODE_SENDEXCEPTION);
         }
         return futureResult;
@@ -437,7 +310,7 @@ class WebSocketRunner implements Runnable {
         return closed;
     }
 
-    public void closeRunner(int code) {
+    public void closeRunner(int code, String reason) {
         if (closed) return;
         synchronized (this) {
             if (closed) return;
@@ -449,7 +322,7 @@ class WebSocketRunner implements Runnable {
             context.offerBuffer(readBuffer);
             readBuffer = null;
             engine.remove(webSocket);
-            webSocket.onClose(code, null);
+            webSocket.onClose(code, reason);
         }
     }
 

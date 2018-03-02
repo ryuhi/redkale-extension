@@ -103,9 +103,9 @@ public class WebSocketEngine {
         final int intervalms = liveinterval * 1000;
         scheduler.scheduleWithFixedDelay(() -> {
             long now = System.currentTimeMillis();
-            getLocalWebSockets().stream().filter(x -> (now - x.getLastSendTime()) > intervalms).forEach(x -> x.sendPing());
+            getLocalWebSockets().stream().filter(x -> (now - x.getLastReadTime()) > intervalms).forEach(x -> x.sendPing());
         }, delay, liveinterval, TimeUnit.SECONDS);
-        if (logger.isLoggable(Level.FINEST)) logger.finest(this.getClass().getSimpleName() + "(" + engineid + ")" + " start keeplive(delay:" + delay + ", wsmaxconns:" + wsmaxconns + ", interval:" + liveinterval + "s) scheduler executor");
+        if (logger.isLoggable(Level.FINEST)) logger.finest(this.getClass().getSimpleName() + "(" + engineid + ")" + " start keeplive(wsmaxconns:" + wsmaxconns + ", delay:" + delay + "s, interval:" + liveinterval + "s) scheduler executor");
     }
 
     void destroy(AnyValue conf) {
@@ -193,7 +193,13 @@ public class WebSocketEngine {
 
     @Comment("给所有连接用户发送消息")
     public CompletableFuture<Integer> broadcastMessage(final Object message, final boolean last) {
-        return broadcastMessage(null, message, last);
+        return broadcastMessage((Predicate) null, message, last);
+    }
+
+    @Comment("给指定WebSocket连接用户发送消息")
+    public CompletableFuture<Integer> broadcastMessage(final WebSocketRange wsrange, final Object message, final boolean last) {
+        Predicate<WebSocket> predicate = wsrange == null ? null : (ws) -> ws.predicate(wsrange);
+        return broadcastMessage(predicate, message, last);
     }
 
     @Comment("给指定WebSocket连接用户发送消息")

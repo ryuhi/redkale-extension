@@ -45,6 +45,8 @@ public class HttpPrepareServlet extends PrepareServlet<String, HttpContext, Http
 
     private BiPredicate<String, String>[] forbidURIPredicates; //禁用的URL的Predicate, 必须与 forbidURIMaps 保持一致
 
+    final List<HttpRender> renders = new ArrayList<>();
+
     private List<HttpServlet> removeHttpServlet(final Predicate<MappingEntry> predicateEntry, final Predicate<Map.Entry<String, WebSocketServlet>> predicateFilter) {
         List<HttpServlet> servlets = new ArrayList<>();
         synchronized (allMapStrings) {
@@ -203,31 +205,54 @@ public class HttpPrepareServlet extends PrepareServlet<String, HttpContext, Http
             s.preInit(context, getServletConf(s));
             s.init(context, getServletConf(s));
         });
-        AnyValue resConfig = config.getAnyValue("resource-servlet");
-        if ((resConfig instanceof DefaultAnyValue) && resConfig.getValue("webroot", "").isEmpty()) {
-            ((DefaultAnyValue) resConfig).addValue("webroot", config.getValue("root"));
-        }
-        if (resConfig == null) { //主要用于嵌入式的HttpServer初始化
-            DefaultAnyValue dresConfig = new DefaultAnyValue();
-            dresConfig.addValue("webroot", config.getValue("root"));
-            dresConfig.addValue("ranges", config.getValue("ranges"));
-            dresConfig.addValue("cache", config.getAnyValue("cache"));
-            AnyValue[] rewrites = config.getAnyValues("rewrite");
-            if (rewrites != null) {
-                for (AnyValue rewrite : rewrites) {
-                    dresConfig.addValue("rewrite", rewrite);
-                }
+        { //设置ResourceServlet
+            AnyValue resConfig = config.getAnyValue("resource-servlet");
+            if ((resConfig instanceof DefaultAnyValue) && resConfig.getValue("webroot", "").isEmpty()) {
+                ((DefaultAnyValue) resConfig).addValue("webroot", config.getValue("root"));
             }
-            resConfig = dresConfig;
+            if (resConfig == null) { //主要用于嵌入式的HttpServer初始化
+                DefaultAnyValue dresConfig = new DefaultAnyValue();
+                dresConfig.addValue("webroot", config.getValue("root"));
+                dresConfig.addValue("ranges", config.getValue("ranges"));
+                dresConfig.addValue("cache", config.getAnyValue("cache"));
+                AnyValue[] rewrites = config.getAnyValues("rewrite");
+                if (rewrites != null) {
+                    for (AnyValue rewrite : rewrites) {
+                        dresConfig.addValue("rewrite", rewrite);
+                    }
+                }
+                resConfig = dresConfig;
+            }
+            String resServlet = resConfig.getValue("servlet", HttpResourceServlet.class.getName());
+            try {
+                this.resourceHttpServlet = (HttpServlet) Thread.currentThread().getContextClassLoader().loadClass(resServlet).newInstance();
+            } catch (Throwable e) {
+                this.resourceHttpServlet = new HttpResourceServlet();
+                logger.log(Level.WARNING, "init HttpResourceSerlvet(" + resServlet + ") error", e);
+            }
+            context.getResourceFactory().inject(this.resourceHttpServlet);
+            this.resourceHttpServlet.init(context, resConfig);
         }
-        String resServlet = resConfig.getValue("servlet", HttpResourceServlet.class.getName());
-        try {
-            this.resourceHttpServlet = (HttpServlet) Thread.currentThread().getContextClassLoader().loadClass(resServlet).newInstance();
-        } catch (Throwable e) {
-            this.resourceHttpServlet = new HttpResourceServlet();
-            logger.log(Level.WARNING, "init HttpResourceSerlvet(" + resServlet + ") error", e);
+        { //设置TemplateEngine            
+            AnyValue[] renderConfigs = config.getAnyValues("render");
+            if (renderConfigs != null) {
+                for (AnyValue renderConfig : renderConfigs) {
+                    String renderType = renderConfig.getValue("value");
+                    try {
+                        HttpRender render = (HttpRender) Thread.currentThread().getContextClassLoader().loadClass(renderType).newInstance();
+                        for (HttpRender one : renders) {
+                            if (one.getType().equals(render.getType())) throw new RuntimeException("HttpRender(" + renderType + ") repeat");
+                        }
+                        context.getResourceFactory().inject(render);
+                        render.init(context, renderConfig);
+                        renders.add(render);
+                    } catch (Throwable e) {
+                        logger.log(Level.WARNING, "init HttpRender(" + renderType + ") error", e);
+                    }
+                }
+                Collections.sort(renders, (o1, o2) -> o1.getType().isAssignableFrom(o2.getType()) ? 1 : -1);
+            }
         }
-        this.resourceHttpServlet.init(context, resConfig);
     }
 
     @Override

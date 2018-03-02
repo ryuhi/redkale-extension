@@ -41,6 +41,14 @@ public final class ObjectEncoder<W extends Writer, T> implements Encodeable<W, T
         if (type instanceof ParameterizedType) {
             final ParameterizedType pt = (ParameterizedType) type;
             this.typeClass = (Class) pt.getRawType();
+        } else if (type instanceof TypeVariable) {
+            TypeVariable tv = (TypeVariable) type;
+            Type[] ts = tv.getBounds();
+            if (ts.length == 1 && ts[0] instanceof Class) {
+                this.typeClass = (Class) ts[0];
+            } else {
+                throw new ConvertException("[" + type + "] is no a class or ParameterizedType");
+            }
         } else {
             this.typeClass = (Class) type;
         }
@@ -66,9 +74,10 @@ public final class ObjectEncoder<W extends Writer, T> implements Encodeable<W, T
                 ConvertColumnEntry ref;
                 for (final Field field : clazz.getFields()) {
                     if (Modifier.isStatic(field.getModifiers())) continue;
+                    if (factory.isConvertDisabled(field)) continue;
                     ref = factory.findRef(field);
                     if (ref != null && ref.ignore()) continue;
-                    Type t = TypeToken.createClassType(field.getGenericType(), this.type);
+                    Type t = TypeToken.createClassType(TypeToken.getGenericType(field.getGenericType(), this.type), this.type);
                     EnMember member = new EnMember(createAttribute(factory, clazz, field, null, null), factory.loadEncoder(t));
                     if (ref != null) member.index = ref.getIndex();
                     list.add(member);
@@ -80,7 +89,7 @@ public final class ObjectEncoder<W extends Writer, T> implements Encodeable<W, T
                     if (method.getName().length() < 3) continue;
                     if (method.getName().equals("getClass")) continue;
                     if (!method.getName().startsWith("is") && !method.getName().startsWith("get")) continue;
-                    if (method.getAnnotation(java.beans.Transient.class) != null) continue;
+                    if (factory.isConvertDisabled(method)) continue;
                     if (method.getParameterTypes().length != 0) continue;
                     if (method.getReturnType() == void.class) continue;
                     if (reversible && (cps == null || !contains(cps, ConvertFactory.readGetSetFieldName(method)))) {
@@ -93,7 +102,7 @@ public final class ObjectEncoder<W extends Writer, T> implements Encodeable<W, T
                     }
                     ref = factory.findRef(method);
                     if (ref != null && ref.ignore()) continue;
-                    Type t = TypeToken.createClassType(method.getGenericReturnType(), this.type);
+                    Type t = TypeToken.createClassType(TypeToken.getGenericType(method.getGenericReturnType(), this.type), this.type);
                     EnMember member = new EnMember(createAttribute(factory, clazz, null, method, null), factory.loadEncoder(t));
                     if (ref != null) member.index = ref.getIndex();
                     list.add(member);
@@ -206,8 +215,9 @@ public final class ObjectEncoder<W extends Writer, T> implements Encodeable<W, T
     }
 
     static String[] findConstructorProperties(Creator creator) {
+        if (creator == null) return null;
         try {
-            Creator.ConstructorParameters cps = creator.getClass().getMethod("create", Object[].class).getAnnotation(Creator.ConstructorParameters.class);
+            ConstructorParameters cps = creator.getClass().getMethod("create", Object[].class).getAnnotation(ConstructorParameters.class);
             return cps == null ? null : cps.value();
         } catch (Exception e) {
             return null;

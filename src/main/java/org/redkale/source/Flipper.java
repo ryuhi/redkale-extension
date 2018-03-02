@@ -33,7 +33,7 @@ public final class Flipper implements Serializable, Cloneable {
     }
 
     public Flipper(int limit) {
-        this.limit = limit > 0 ? limit : DEFAULT_LIMIT;
+        this.limit = limit > 0 ? limit : 0;
     }
 
     public Flipper(String sortColumn) {
@@ -41,17 +41,17 @@ public final class Flipper implements Serializable, Cloneable {
     }
 
     public Flipper(int limit, int offset) {
-        this.limit = limit > 0 ? limit : DEFAULT_LIMIT;
+        this.limit = limit > 0 ? limit : 0;
         this.offset = offset < 0 ? 0 : offset;
     }
 
     public Flipper(int limit, String sortColumn) {
-        this.limit = limit > 0 ? limit : DEFAULT_LIMIT;
+        this.limit = limit > 0 ? limit : 0;
         this.sort = sortColumn;
     }
 
     public Flipper(int limit, int offset, String sortColumn) {
-        this.limit = limit > 0 ? limit : DEFAULT_LIMIT;
+        this.limit = limit > 0 ? limit : 0;
         this.offset = offset < 0 ? 0 : offset;
         this.sort = sortColumn;
     }
@@ -93,13 +93,16 @@ public final class Flipper implements Serializable, Cloneable {
     }
 
     public void setLimit(int limit) {
-        if (limit > 0) {
-            this.limit = limit;
-        }
+        this.limit = limit;
     }
 
     public Flipper limit(int limit) {
         setLimit(limit);
+        return this;
+    }
+
+    public Flipper unlimit() {
+        this.limit = 0;
         return this;
     }
 
@@ -121,9 +124,7 @@ public final class Flipper implements Serializable, Cloneable {
     }
 
     public void setSort(String sort) {
-        if (sort != null) {
-            this.sort = sort.trim();
-        }
+        this.sort = sort == null ? "" : sort.trim();
     }
 
     public Flipper sort(String sort) {

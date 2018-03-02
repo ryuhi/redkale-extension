@@ -11,7 +11,6 @@ import java.math.*;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.CompletionHandler;
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.*;
@@ -103,7 +102,6 @@ public abstract class ConvertFactory<R extends Reader, W extends Writer> {
             this.register(URL.class, URLSimpledCoder.instance);
             this.register(URI.class, URISimpledCoder.instance);
             //---------------------------------------------------------
-            this.register(LocalDateTime.class, LocalDateTimeSimpledCoder.instance);
             this.register(ByteBuffer.class, ByteBufferSimpledCoder.instance);
             this.register(boolean[].class, BoolArraySimpledCoder.instance);
             this.register(byte[].class, ByteArraySimpledCoder.instance);
@@ -121,7 +119,7 @@ public abstract class ConvertFactory<R extends Reader, W extends Writer> {
             this.register(AnyValue.class, Creator.create(AnyValue.DefaultAnyValue.class));
             this.register(HttpCookie.class, new Creator<HttpCookie>() {
                 @Override
-                @Creator.ConstructorParameters({"name", "value"})
+                @ConstructorParameters({"name", "value"})
                 public HttpCookie create(Object... params) {
                     return new HttpCookie((String) params[0], (String) params[1]);
                 }
@@ -149,6 +147,25 @@ public abstract class ConvertFactory<R extends Reader, W extends Writer> {
     public ConvertFactory tiny(boolean tiny) {
         this.tiny = tiny;
         return this;
+    }
+
+    public boolean isConvertDisabled(AccessibleObject element) {
+        ConvertDisabled[] ccs = element.getAnnotationsByType(ConvertDisabled.class);
+        if (ccs.length == 0 && element instanceof Method) {
+            final Method method = (Method) element;
+            String fieldName = readGetSetFieldName(method);
+            if (fieldName != null) {
+                try {
+                    ccs = method.getDeclaringClass().getDeclaredField(fieldName).getAnnotationsByType(ConvertDisabled.class);
+                } catch (Exception e) { //说明没有该字段，忽略异常
+                }
+            }
+        }
+        final ConvertType ct = this.getConvertType();
+        for (ConvertDisabled ref : ccs) {
+            if (ref.type().contains(ct)) return true;
+        }
+        return false;
     }
 
     public ConvertColumnEntry findRef(AccessibleObject element) {

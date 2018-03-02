@@ -7,9 +7,9 @@ package org.redkale.util;
 import java.lang.reflect.Type;
 import java.lang.reflect.*;
 import java.util.*;
-import jdk.internal.org.objectweb.asm.*;
-import static jdk.internal.org.objectweb.asm.ClassWriter.COMPUTE_FRAMES;
-import static jdk.internal.org.objectweb.asm.Opcodes.*;
+import org.redkale.asm.*;
+import static org.redkale.asm.ClassWriter.COMPUTE_FRAMES;
+import static org.redkale.asm.Opcodes.*;
 
 /**
  *
@@ -54,6 +54,86 @@ public abstract class TypeToken<T> {
             if (!isClassType(t)) return false;
         }
         return true;
+    }
+
+    public static Type[] getGenericType(final Type[] types, final Type declaringClass) {
+        Type[] newTypes = new Type[types.length];
+        for (int i = 0; i < newTypes.length; i++) {
+            newTypes[i] = getGenericType(types[i], declaringClass);
+        }
+        return newTypes;
+    }
+
+    /**
+     * 获取TypeVariable对应的实际Type, 如果type不是TypeVariable 直接返回type。
+     * <pre>
+     *  public abstract class Key {
+     *  }
+     *  public abstract class Val {
+     *  }
+     *  public abstract class AService &lt;K extends Key, V extends Val&gt; {
+     *       public abstract V findValue(K key);
+     *       public abstract Sheet&lt;V&gt; queryValue(K key);
+     *  }
+     *  public class Key2 extends Key {
+     *  }
+     *  public class Val2 extends Val {
+     *  }
+     *  public class Service2 extends Service &lt;Key2, Val2&gt; {
+     *       public Val2 findValue(Key2 key){
+     *          return new Val2();
+     *       }
+     *       public Sheet&lt;Val2&gt; queryValue(Key2 key){
+     *          return new Sheet();
+     *       }
+     *  }
+     * </pre>
+     *
+     *
+     * @param type           泛型
+     * @param declaringClass 泛型依附类
+     *
+     * @return Type
+     */
+    public static Type getGenericType(final Type type, final Type declaringClass) {
+        if (type == null || declaringClass == null) return type;
+        if (type instanceof TypeVariable) {
+            Type superType = null;
+            Class declaringClass0 = null;
+            if (declaringClass instanceof Class) {
+                declaringClass0 = (Class) declaringClass;
+                superType = declaringClass0.getGenericSuperclass();
+                while (superType instanceof Class && superType != Object.class) superType = ((Class) superType).getGenericSuperclass();
+            } else if (declaringClass instanceof ParameterizedType) {
+                superType = declaringClass;
+                Type rawType = ((ParameterizedType) declaringClass).getRawType();
+                if (rawType instanceof Class) declaringClass0 = (Class) rawType;
+            }
+            if (declaringClass0 != null && superType instanceof ParameterizedType) {
+                ParameterizedType superPT = (ParameterizedType) superType;
+                Type[] atas = superPT.getActualTypeArguments();
+                Class ss = declaringClass0;
+                TypeVariable[] asts = ss.getTypeParameters();
+                while (atas.length != asts.length && ss != Object.class) {
+                    ss = ss.getSuperclass();
+                    asts = ss.getTypeParameters();
+                }
+                if (atas.length == asts.length) {
+                    for (int i = 0; i < asts.length; i++) {
+                        if (asts[i] == type) return atas[i];
+                    }
+                }
+            }
+            TypeVariable tv = (TypeVariable) type;
+            if (tv.getBounds().length == 1) return tv.getBounds()[0];
+        }
+        if (type instanceof ParameterizedType) {
+            ParameterizedType pt = (ParameterizedType) type;
+            return createParameterizedType(getGenericType(pt.getOwnerType(), declaringClass),
+                getGenericType(pt.getRawType(), declaringClass),
+                getGenericType(pt.getActualTypeArguments(), declaringClass));
+        }
+        return type;
     }
 
     /**
@@ -191,7 +271,7 @@ public abstract class TypeToken<T> {
         FieldVisitor fv;
         MethodVisitor mv;
         cw.visit(V1_8, ACC_PUBLIC + ACC_FINAL + ACC_SUPER, newDynName, null, "java/lang/Object", null);
-        String rawTypeDesc = jdk.internal.org.objectweb.asm.Type.getDescriptor(rawType);
+        String rawTypeDesc = org.redkale.asm.Type.getDescriptor(rawType);
         StringBuilder sb = new StringBuilder();
         sb.append(rawTypeDesc.substring(0, rawTypeDesc.length() - 1)).append('<');
         for (Type c : actualTypeArguments) {
@@ -226,7 +306,7 @@ public abstract class TypeToken<T> {
 
     private static CharSequence getClassTypeDescriptor(Type type) {
         if (!isClassType(type)) throw new IllegalArgumentException(type + " not a class type");
-        if (type instanceof Class) return jdk.internal.org.objectweb.asm.Type.getDescriptor((Class) type);
+        if (type instanceof Class) return org.redkale.asm.Type.getDescriptor((Class) type);
         final ParameterizedType pt = (ParameterizedType) type;
         CharSequence rawTypeDesc = getClassTypeDescriptor(pt.getRawType());
         StringBuilder sb = new StringBuilder();

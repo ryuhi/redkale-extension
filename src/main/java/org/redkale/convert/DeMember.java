@@ -47,7 +47,7 @@ public final class DeMember<R extends Reader, T, F> implements Comparable<DeMemb
     }
 
     public static <R extends Reader, T, F> DeMember<R, T, F> create(final ConvertFactory factory, final Class<T> clazz, final String fieldname, final Class<F> fieldtype) {
-        return new DeMember<R,T,F>(Attribute.create(clazz, fieldname, fieldtype), factory.loadDecoder(fieldtype));
+        return new DeMember<>(Attribute.create(clazz, fieldname, fieldtype), factory.loadDecoder(fieldtype));
     }
 
     public static <R extends Reader, T, F> DeMember<R, T, F> create(final Attribute<T, F> attribute, final ConvertFactory factory, final Class<F> fieldtype) {

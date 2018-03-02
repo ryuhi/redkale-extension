@@ -5,6 +5,7 @@
  */
 package org.redkale.net.sncp;
 
+import org.redkale.asm.MethodDebugVisitor;
 import static org.redkale.net.sncp.SncpRequest.DEFAULT_HEADER;
 import java.io.*;
 import java.lang.annotation.*;
@@ -16,10 +17,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.*;
 import java.util.logging.*;
 import javax.annotation.*;
-import jdk.internal.org.objectweb.asm.*;
-import static jdk.internal.org.objectweb.asm.ClassWriter.COMPUTE_FRAMES;
-import static jdk.internal.org.objectweb.asm.Opcodes.*;
-import jdk.internal.org.objectweb.asm.Type;
+import org.redkale.asm.*;
+import static org.redkale.asm.ClassWriter.COMPUTE_FRAMES;
+import static org.redkale.asm.Opcodes.*;
+import org.redkale.asm.Type;
 import org.redkale.convert.bson.*;
 import org.redkale.net.sncp.SncpAsyncHandler.DefaultSncpAsyncHandler;
 import org.redkale.service.*;
@@ -318,7 +319,7 @@ public final class SncpDynServlet extends SncpServlet {
             //-------------------------------------------------------------
             ClassWriter cw = new ClassWriter(COMPUTE_FRAMES);
             FieldVisitor fv;
-            AsmMethodVisitor mv;
+            MethodDebugVisitor mv;
 
             cw.visit(V1_8, ACC_PUBLIC + ACC_FINAL + ACC_SUPER, newDynName, null, supDynName, null);
 
@@ -330,7 +331,7 @@ public final class SncpDynServlet extends SncpServlet {
                 fv.visitEnd();
             }
             {  // constructor方法
-                mv = new AsmMethodVisitor(cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null));
+                mv = new MethodDebugVisitor(cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null));
                 mv.visitVarInsn(ALOAD, 0);
                 mv.visitMethodInsn(INVOKESPECIAL, supDynName, "<init>", "()V", false);
                 mv.visitInsn(RETURN);
@@ -346,7 +347,7 @@ public final class SncpDynServlet extends SncpServlet {
             int handlerFuncIndex = -1;
             Class handlerFuncClass = null;
             { // action方法
-                mv = new AsmMethodVisitor(cw.visitMethod(ACC_PUBLIC, "action", "(" + convertReaderDesc + convertWriterDesc + asyncHandlerDesc + ")V", null, new String[]{"java/lang/Throwable"}));
+                mv = new MethodDebugVisitor(cw.visitMethod(ACC_PUBLIC, "action", "(" + convertReaderDesc + convertWriterDesc + asyncHandlerDesc + ")V", null, new String[]{"java/lang/Throwable"}));
                 //mv.setDebug(true);
                 int iconst = ICONST_1;
                 int intconst = 1;
@@ -587,13 +588,9 @@ public final class SncpDynServlet extends SncpServlet {
             try {
                 SncpServletAction instance = (SncpServletAction) newClazz.newInstance();
                 instance.method = method;
-                java.lang.reflect.Type[] ptypes = method.getGenericParameterTypes();
+                java.lang.reflect.Type[] ptypes = TypeToken.getGenericType(method.getGenericParameterTypes(), serviceClass);
                 java.lang.reflect.Type[] types = new java.lang.reflect.Type[ptypes.length + 1];
-                java.lang.reflect.Type rt = method.getGenericReturnType();
-                if (rt instanceof TypeVariable) {
-                    TypeVariable tv = (TypeVariable) rt;
-                    if (tv.getBounds().length == 1) rt = tv.getBounds()[0];
-                }
+                java.lang.reflect.Type rt = TypeToken.getGenericType(method.getGenericReturnType(), serviceClass);
                 types[0] = rt;
                 System.arraycopy(ptypes, 0, types, 1, ptypes.length);
                 instance.paramTypes = types;

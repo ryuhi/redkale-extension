@@ -31,7 +31,7 @@ public final class ObjectDecoder<R extends Reader, T> implements Decodeable<R, T
 
     protected Creator<T> creator;
 
-    protected DeMember<R, T, ?>[] creatorConstructorMembers;
+    protected DeMember<R, T, ?>[] creatorConstructorMembers = new DeMember[0];
 
     protected DeMember<R, T, ?>[] members;
 
@@ -46,6 +46,14 @@ public final class ObjectDecoder<R extends Reader, T> implements Decodeable<R, T
         if (type instanceof ParameterizedType) {
             final ParameterizedType pt = (ParameterizedType) type;
             this.typeClass = (Class) pt.getRawType();
+        } else if (type instanceof TypeVariable) {
+            TypeVariable tv = (TypeVariable) type;
+            Type[] ts = tv.getBounds();
+            if (ts.length == 1 && ts[0] instanceof Class) {
+                this.typeClass = (Class) ts[0];
+            } else {
+                throw new ConvertException("[" + type + "] is no a class or ParameterizedType");
+            }
         } else {
             this.typeClass = (Class) type;
         }
@@ -61,23 +69,33 @@ public final class ObjectDecoder<R extends Reader, T> implements Decodeable<R, T
             if (type instanceof ParameterizedType) {
                 final ParameterizedType pts = (ParameterizedType) type;
                 clazz = (Class) (pts).getRawType();
+            } else if (type instanceof TypeVariable) {
+                TypeVariable tv = (TypeVariable) type;
+                Type[] ts = tv.getBounds();
+                if (ts.length == 1 && ts[0] instanceof Class) {
+                    clazz = (Class) ts[0];
+                } else {
+                    throw new ConvertException("[" + type + "] is no a class or TypeVariable");
+                }
             } else if (!(type instanceof Class)) {
                 throw new ConvertException("[" + type + "] is no a class");
             } else {
                 clazz = (Class) type;
             }
-            this.creator = factory.loadCreator(clazz);
-            if (this.creator == null) throw new ConvertException("Cannot create a creator for " + clazz);
-
+            if (!clazz.isInterface() && !Modifier.isAbstract(clazz.getModifiers())) {
+                this.creator = factory.loadCreator(clazz);
+                if (this.creator == null) throw new ConvertException("Cannot create a creator for " + clazz);
+            }
             final Set<DeMember> list = new HashSet();
             final String[] cps = ObjectEncoder.findConstructorProperties(this.creator);
             try {
                 ConvertColumnEntry ref;
                 for (final Field field : clazz.getFields()) {
                     if (Modifier.isStatic(field.getModifiers())) continue;
+                    if (factory.isConvertDisabled(field)) continue;
                     ref = factory.findRef(field);
                     if (ref != null && ref.ignore()) continue;
-                    Type t = TypeToken.createClassType(field.getGenericType(), this.type);
+                    Type t = TypeToken.createClassType(TypeToken.getGenericType(field.getGenericType(), this.type), this.type);
                     DeMember member = new DeMember(ObjectEncoder.createAttribute(factory, clazz, field, null, null), factory.loadDecoder(t));
                     if (ref != null) member.index = ref.getIndex();
                     list.add(member);
@@ -89,7 +107,7 @@ public final class ObjectDecoder<R extends Reader, T> implements Decodeable<R, T
                     if (method.isSynthetic()) continue;
                     if (method.getName().length() < 4) continue;
                     if (!method.getName().startsWith("set")) continue;
-                    if (method.getAnnotation(java.beans.Transient.class) != null) continue;
+                    if (factory.isConvertDisabled(method)) continue;
                     if (method.getParameterTypes().length != 1) continue;
                     if (method.getReturnType() != void.class) continue;
                     if (reversible && (cps == null || !ObjectEncoder.contains(cps, ConvertFactory.readGetSetFieldName(method)))) {
@@ -102,7 +120,7 @@ public final class ObjectDecoder<R extends Reader, T> implements Decodeable<R, T
                     }
                     ref = factory.findRef(method);
                     if (ref != null && ref.ignore()) continue;
-                    Type t = TypeToken.createClassType(method.getGenericParameterTypes()[0], this.type);
+                    Type t = TypeToken.createClassType(TypeToken.getGenericType(method.getGenericParameterTypes()[0], this.type), this.type);
                     DeMember member = new DeMember(ObjectEncoder.createAttribute(factory, clazz, null, null, method), factory.loadDecoder(t));
                     if (ref != null) member.index = ref.getIndex();
                     list.add(member);
@@ -132,7 +150,7 @@ public final class ObjectDecoder<R extends Reader, T> implements Decodeable<R, T
                             } catch (NoSuchMethodException ex) {
                                 getter = clazz.getMethod("is" + mn);
                             }
-                            Type t = TypeToken.createClassType(getter.getGenericParameterTypes()[0], this.type);
+                            Type t = TypeToken.createClassType(TypeToken.getGenericType(getter.getGenericParameterTypes()[0], this.type), this.type);
                             list.add(new DeMember(ObjectEncoder.createAttribute(factory, clazz, null, getter, null), factory.loadDecoder(t)));
                         }
                     }
@@ -183,6 +201,11 @@ public final class ObjectDecoder<R extends Reader, T> implements Decodeable<R, T
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
+            }
+        }
+        if (this.creator == null) {
+            if (typeClass.isInterface() || Modifier.isAbstract(typeClass.getModifiers())) {
+                throw new ConvertException("[" + typeClass + "] is a interface or abstract class, cannot create it's Creator.");
             }
         }
         if (this.creatorConstructorMembers == null) {  //空构造函数

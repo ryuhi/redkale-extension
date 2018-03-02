@@ -25,11 +25,15 @@ import org.redkale.util.*;
 public class SncpServer extends Server<DLong, SncpContext, SncpRequest, SncpResponse, SncpServlet> {
 
     public SncpServer() {
-        this(System.currentTimeMillis());
+        this(System.currentTimeMillis(), ResourceFactory.root());
     }
 
-    public SncpServer(long serverStartTime) {
-        super(serverStartTime, "TCP", new SncpPrepareServlet());
+    public SncpServer(ResourceFactory resourceFactory) {
+        this(System.currentTimeMillis(), resourceFactory);
+    }
+
+    public SncpServer(long serverStartTime, ResourceFactory resourceFactory) {
+        super(serverStartTime, "TCP", resourceFactory, new SncpPrepareServlet());
     }
 
     @Override
@@ -92,7 +96,7 @@ public class SncpServer extends Server<DLong, SncpContext, SncpRequest, SncpResp
         final int port = this.address.getPort();
         AtomicLong createBufferCounter = new AtomicLong();
         AtomicLong cycleBufferCounter = new AtomicLong();
-        final int rcapacity = Math.max(this.bufferCapacity, 4 * 1024);
+        final int rcapacity = Math.max(this.bufferCapacity, 8 * 1024);
         ObjectPool<ByteBuffer> bufferPool = new ObjectPool<>(createBufferCounter, cycleBufferCounter, this.bufferPoolSize,
             (Object... params) -> ByteBuffer.allocateDirect(rcapacity), null, (e) -> {
                 if (e == null || e.isReadOnly() || e.capacity() != rcapacity) return false;
@@ -102,8 +106,8 @@ public class SncpServer extends Server<DLong, SncpContext, SncpRequest, SncpResp
         AtomicLong createResponseCounter = new AtomicLong();
         AtomicLong cycleResponseCounter = new AtomicLong();
         ObjectPool<Response> responsePool = SncpResponse.createPool(createResponseCounter, cycleResponseCounter, this.responsePoolSize, null);
-        SncpContext sncpcontext = new SncpContext(this.serverStartTime, this.logger, executor, rcapacity, bufferPool, responsePool,
-            this.maxbody, this.charset, this.address, this.prepare, this.readTimeoutSecond, this.writeTimeoutSecond);
+        SncpContext sncpcontext = new SncpContext(this.serverStartTime, this.logger, executor, this.sslContext, rcapacity, bufferPool, responsePool,
+            this.maxbody, this.charset, this.address, this.resourceFactory, this.prepare, this.readTimeoutSecond, this.writeTimeoutSecond);
         responsePool.setCreator((Object... params) -> new SncpResponse(sncpcontext, new SncpRequest(sncpcontext)));
         return sncpcontext;
     }

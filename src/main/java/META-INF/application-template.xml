@@ -34,14 +34,14 @@
         <!--
             【节点全局唯一】
             transport节点只能有一个，用于配置所有Transport的池参数，没配置该节点将自动创建一个。
-            threads： 线程总数， 默认: <group>节点数*CPU核数*8
-            bufferCapacity: ByteBuffer的初始化大小， 默认: 8K; 
-            bufferPoolSize： ByteBuffer池的大小，默认: <group>节点数*CPU核数*8
+            threads： 线程总数， 默认: <group>节点数*CPU核数*2
+            bufferCapacity: ByteBuffer的初始化大小， 默认: 32K; 
+            bufferPoolSize： ByteBuffer池的大小，默认: 线程总数*4
             readTimeoutSecond: TCP读取超时秒数, 默认为6秒， 为0表示无超时限制
             writeTimeoutSecond: TCP写入超时秒数, 默认为6秒， 为0表示无超时限制
             strategy: 远程请求的负载均衡策略， 必须是org.redkale.net.TransportStrategy的实现类
         -->
-        <transport bufferCapacity="8K" bufferPoolSize="32" threads="32" readTimeoutSecond="6" writeTimeoutSecond="6"/>
+        <transport bufferCapacity="32K" bufferPoolSize="32" threads="32" readTimeoutSecond="6" writeTimeoutSecond="6"/>
         
         <!--
             一个组包含多个node， 同一Service服务可以由多个进程提供，这些进程称为一个GROUP，且同一GROUP内的进程必须在同一机房或局域网内
@@ -57,8 +57,6 @@
                 同一个<node>节点值只能存在一个<group>节点内，即同一个addr+port只能属于一个group。
                 addr: required IP地址
                 port: required 端口
-                clients: 连接池数， 默认: CPU核数*4
-                buffers: ByteBuffer对象池的大小， 默认: CPU核数*8
             -->
             <node addr="127.0.0.1" port="7070"/>
         </group>
@@ -87,6 +85,7 @@
             如果name是mimetype.property.开头的值将会在进程启动时进行MimeType.add("yyyy", "YYYYYY")操作。
             load:  加载文件，多个用;隔开。
             默认置入的system.property.的有：
+               System.setProperty("net.transport.pinginterval", "30");
                System.setProperty("convert.json.tiny", "true");
                System.setProperty("convert.bson.tiny", "true");
                System.setProperty("convert.json.pool.size", "128");
@@ -115,12 +114,12 @@
         excludelibs: 排除lib.path与excludes中的正则表达式匹配的路径, 多个正则表达式用分号;隔开
         charset: 文本编码， 默认: UTF-8
         backlog:  默认10K
-        threads： 线程总数， 默认: CPU核数*16
+        threads： 线程总数， 默认: CPU核数*8
         maxconns：最大连接数, 小于1表示无限制， 默认: 0
         maxbody: request.body最大值， 默认: 64K
-        bufferCapacity: ByteBuffer的初始化大小， 默认: 8K;  如果是HTTP协议则默认: 16K + 16B (兼容HTTP 2.0、WebSocket)
-        bufferPoolSize： ByteBuffer池的大小，默认: CPU核数*512
-        responsePoolSize： Response池的大小，默认: CPU核数*256
+        bufferCapacity: ByteBuffer的初始化大小， 默认: 32K;  (HTTP 2.0、WebSocket，必须要16k以上)
+        bufferPoolSize： ByteBuffer池的大小，默认: 线程总数*4
+        responsePoolSize： Response池的大小，默认: 线程总数*2
         readTimeoutSecond: 读操作超时秒数， 默认0， 表示永久不超时
         writeTimeoutSecond:  写操作超时秒数， 默认0， 表示永久不超时
         interceptor: 启动/关闭NodeServer时被调用的拦截器实现类，必须是org.redkale.boot.NodeInterceptor的子类，默认为null
@@ -230,7 +229,13 @@
             <setheader name="Access-Control-Allow-Credentials" value="true"/>
             <options auto="true" />
         </response>
-            
+        <!-- 
+           【节点在<server>中唯一】
+           当Server为HTTP协议时，render才有效. 指定输出引擎的实现类
+           value: 输出引擎的实现类, 必须是org.redkale.net.http.HttpRender的子类
+        -->
+        <render value="org.redkalex.htel.HttpTemplateRender">
+        </render>
         <!-- 
            【节点在<server>中唯一】
            当Server为HTTP协议时，ResourceServlet才有效. 默认存在一个有默认属性的resource-servlet节点

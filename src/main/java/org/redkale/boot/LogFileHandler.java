@@ -14,6 +14,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import java.util.logging.*;
 import java.util.logging.Formatter;
+import java.util.regex.Pattern;
 
 /**
  * 自定义的日志输出类
@@ -99,6 +100,8 @@ public class LogFileHandler extends Handler {
 
     private boolean append;
 
+    private Pattern denyreg;
+
     private final AtomicLong loglength = new AtomicLong();
 
     private final AtomicLong logunusuallength = new AtomicLong();
@@ -154,6 +157,8 @@ public class LogFileHandler extends Handler {
                                         if (greater.exists()) Files.move(greater.toPath(), new File(logfile.getPath() + "." + (i + 1)).toPath(), REPLACE_EXISTING, ATOMIC_MOVE);
                                     }
                                     Files.move(logfile.toPath(), new File(logfile.getPath() + ".1").toPath(), REPLACE_EXISTING, ATOMIC_MOVE);
+                                } else {
+                                    if (logfile.exists() && logfile.length() < 1) logfile.delete();
                                 }
                                 logstream = null;
                             }
@@ -166,6 +171,8 @@ public class LogFileHandler extends Handler {
                                     if (greater.exists()) Files.move(greater.toPath(), new File(logunusualfile.getPath() + "." + (i + 1)).toPath(), REPLACE_EXISTING, ATOMIC_MOVE);
                                 }
                                 Files.move(logunusualfile.toPath(), new File(logunusualfile.getPath() + ".1").toPath(), REPLACE_EXISTING, ATOMIC_MOVE);
+                            } else {
+                                if (logunusualfile.exists() && logunusualfile.length() < 1) logunusualfile.delete();
                             }
                             logunusualstream = null;
                         }
@@ -278,6 +285,14 @@ public class LogFileHandler extends Handler {
             if (encodingstr != null) setEncoding(encodingstr);
         } catch (Exception e) {
         }
+
+        String denyregstr = manager.getProperty(cname + ".denyreg");
+        try {
+            if (denyregstr != null && !denyregstr.trim().isEmpty()) {
+                denyreg = Pattern.compile(denyregstr);
+            }
+        } catch (Exception e) {
+        }
     }
 
     @Override
@@ -294,6 +309,7 @@ public class LogFileHandler extends Handler {
         } else {
             record.setSourceClassName('[' + Thread.currentThread().getName() + "] " + sourceClassName);
         }
+        if (denyreg != null && denyreg.matcher(record.getMessage()).find()) return;
         records.offer(record);
     }
 

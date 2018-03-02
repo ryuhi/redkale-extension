@@ -15,7 +15,7 @@ import java.text.*;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.BiFunction;
+import java.util.function.*;
 import java.util.logging.Level;
 import org.redkale.convert.*;
 import org.redkale.convert.json.JsonConvert;
@@ -122,17 +122,26 @@ public class HttpResponse extends Response<HttpContext, HttpRequest> {
 
     private final HttpCookie defcookie;
 
+    private final List<HttpRender> renders;
+
+    private final boolean hasRender;
+
+    private final HttpRender onlyoneHttpRender;
+
     public static ObjectPool<Response> createPool(AtomicLong creatCounter, AtomicLong cycleCounter, int max, Creator<Response> creator) {
         return new ObjectPool<>(creatCounter, cycleCounter, max, creator, (x) -> ((HttpResponse) x).prepare(), (x) -> ((HttpResponse) x).recycle());
     }
 
     public HttpResponse(HttpContext context, HttpRequest request, String[][] defaultAddHeaders, String[][] defaultSetHeaders,
-        HttpCookie defcookie, boolean autoOptions) {
+        HttpCookie defcookie, boolean autoOptions, List< HttpRender> renders) {
         super(context, request);
         this.defaultAddHeaders = defaultAddHeaders;
         this.defaultSetHeaders = defaultSetHeaders;
         this.defcookie = defcookie;
         this.autoOptions = autoOptions;
+        this.renders = renders;
+        this.hasRender = renders != null && !renders.isEmpty();
+        this.onlyoneHttpRender = renders != null && renders.size() == 1 ? renders.get(0) : null;
     }
 
     @Override
@@ -225,7 +234,7 @@ public class HttpResponse extends Response<HttpContext, HttpRequest> {
         return Utility.createAsyncHandler((v, a) -> {
             finish(v);
         }, (t, a) -> {
-            request.getContext().getLogger().log(Level.WARNING, "Servlet occur, forece to close channel. request = " + request + ", result is CompletionHandler", (Throwable) t);
+            context.getLogger().log(Level.WARNING, "Servlet occur, forece to close channel. request = " + request + ", result is CompletionHandler", (Throwable) t);
             finish(500, null);
         });
     }
@@ -244,6 +253,15 @@ public class HttpResponse extends Response<HttpContext, HttpRequest> {
     public <H extends CompletionHandler> H createAsyncHandler(Class<H> handlerClass) {
         if (handlerClass == null || handlerClass == CompletionHandler.class) return (H) createAsyncHandler();
         return context.loadAsyncHandlerCreator(handlerClass).create(createAsyncHandler());
+    }
+
+    /**
+     * 获取ByteBuffer生成器
+     *
+     * @return ByteBuffer生成器
+     */
+    public Supplier<ByteBuffer> getBufferSupplier() {
+        return getBodyBufferSupplier();
     }
 
     /**
@@ -446,7 +464,7 @@ public class HttpResponse extends Response<HttpContext, HttpRequest> {
             try {
                 finish((File) obj);
             } catch (IOException e) {
-                getContext().getLogger().log(Level.WARNING, "HttpServlet finish File occur, forece to close channel. request = " + getRequest(), e);
+                context.getLogger().log(Level.WARNING, "HttpServlet finish File occur, forece to close channel. request = " + getRequest(), e);
                 finish(500, null);
             }
         } else if (obj instanceof HttpResult) {
@@ -459,6 +477,23 @@ public class HttpResponse extends Response<HttpContext, HttpRequest> {
                 finish(convert, result.getResult());
             }
         } else {
+            if (hasRender) {
+                if (onlyoneHttpRender != null) {
+                    if (onlyoneHttpRender.getType().isAssignableFrom(obj.getClass())) {
+                        onlyoneHttpRender.renderTo(this.request, this, convert, obj);
+                        return;
+                    }
+                } else {
+                    Class objt = obj.getClass();
+                    for (HttpRender render : this.renders) {
+                        if (render.getType().isAssignableFrom(objt)) {
+                            render.renderTo(this.request, this, convert, obj);
+                            return;
+                        }
+                    }
+                }
+            }
+
             if (convert instanceof TextConvert) this.contentType = "text/plain; charset=utf-8";
             if (this.recycleListener != null) this.output = obj;
             if (obj instanceof org.redkale.service.RetResult) {
@@ -1098,7 +1133,7 @@ public class HttpResponse extends Response<HttpContext, HttpRequest> {
 
         @Override
         public void failed(Throwable exc, ByteBuffer attachment) {
-            getContext().offerBuffer(attachment);
+            context.offerBuffer(attachment);
             finish(true);
             try {
                 filechannel.close();

@@ -5,6 +5,7 @@
  */
 package org.redkale.net.http;
 
+import org.redkale.asm.MethodDebugVisitor;
 import java.net.*;
 import java.nio.*;
 import java.nio.channels.CompletionHandler;
@@ -12,8 +13,9 @@ import java.nio.charset.*;
 import java.security.*;
 import java.util.concurrent.*;
 import java.util.logging.*;
-import jdk.internal.org.objectweb.asm.*;
-import static jdk.internal.org.objectweb.asm.Opcodes.*;
+import javax.net.ssl.SSLContext;
+import org.redkale.asm.*;
+import static org.redkale.asm.Opcodes.*;
 import org.redkale.net.*;
 import org.redkale.util.*;
 
@@ -31,11 +33,12 @@ public class HttpContext extends Context {
 
     protected final ConcurrentHashMap<Class, Creator> asyncHandlerCreators = new ConcurrentHashMap<>();
 
-    public HttpContext(long serverStartTime, Logger logger, ThreadPoolExecutor executor, int bufferCapacity, ObjectPool<ByteBuffer> bufferPool,
-        ObjectPool<Response> responsePool, int maxbody, Charset charset, InetSocketAddress address, PrepareServlet prepare,
-        int readTimeoutSecond, int writeTimeoutSecond) {
-        super(serverStartTime, logger, executor, bufferCapacity, bufferPool, responsePool, maxbody, charset,
-            address, prepare, readTimeoutSecond, writeTimeoutSecond);
+    public HttpContext(long serverStartTime, Logger logger, ThreadPoolExecutor executor, SSLContext sslContext,
+        final int bufferCapacity, final ObjectPool<ByteBuffer> bufferPool, ObjectPool<Response> responsePool,
+        int maxbody, Charset charset, InetSocketAddress address, ResourceFactory resourceFactory,
+        PrepareServlet prepare, int readTimeoutSecond, int writeTimeoutSecond) {
+        super(serverStartTime, logger, executor, sslContext, bufferCapacity, bufferPool, responsePool,
+            maxbody, charset, address, resourceFactory, prepare, readTimeoutSecond, writeTimeoutSecond);
 
         random.setSeed(Math.abs(System.nanoTime()));
     }
@@ -76,7 +79,7 @@ public class HttpContext extends Context {
 
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
         FieldVisitor fv;
-        AsmMethodVisitor mv;
+        MethodDebugVisitor mv;
         AnnotationVisitor av0;
         cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, newDynName, null, handlerinterface ? "java/lang/Object" : handlerClassName, handlerinterface ? new String[]{handlerClassName} : new String[]{handlerName});
 
@@ -85,10 +88,10 @@ public class HttpContext extends Context {
             fv.visitEnd();
         }
         {//构造方法
-            mv = new AsmMethodVisitor(cw.visitMethod(ACC_PUBLIC, "<init>", "(" + handlerDesc + ")V", null, null));
+            mv = new MethodDebugVisitor(cw.visitMethod(ACC_PUBLIC, "<init>", "(" + handlerDesc + ")V", null, null));
             //mv.setDebug(true);
             {
-                av0 = mv.visitAnnotation("Ljava/beans/ConstructorProperties;", true);
+                av0 = mv.visitAnnotation("Lorg/redkale/util/ConstructorParameters;", true);
                 {
                     AnnotationVisitor av1 = av0.visitArray("value");
                     av1.visit(null, "handler");
@@ -108,7 +111,7 @@ public class HttpContext extends Context {
 
         for (java.lang.reflect.Method method : handlerClass.getMethods()) { //
             if ("completed".equals(method.getName()) && method.getParameterCount() == 2) {
-                mv = new AsmMethodVisitor(cw.visitMethod(ACC_PUBLIC, "completed", Type.getMethodDescriptor(method), null, null));
+                mv = new MethodDebugVisitor(cw.visitMethod(ACC_PUBLIC, "completed", Type.getMethodDescriptor(method), null, null));
                 mv.visitVarInsn(ALOAD, 0);
                 mv.visitFieldInsn(GETFIELD, newDynName, "handler", handlerDesc);
                 mv.visitVarInsn(ALOAD, 1);
@@ -118,7 +121,7 @@ public class HttpContext extends Context {
                 mv.visitMaxs(3, 3);
                 mv.visitEnd();
             } else if ("failed".equals(method.getName()) && method.getParameterCount() == 2) {
-                mv = new AsmMethodVisitor(cw.visitMethod(ACC_PUBLIC, "failed", Type.getMethodDescriptor(method), null, null));
+                mv = new MethodDebugVisitor(cw.visitMethod(ACC_PUBLIC, "failed", Type.getMethodDescriptor(method), null, null));
                 mv.visitVarInsn(ALOAD, 0);
                 mv.visitFieldInsn(GETFIELD, newDynName, "handler", handlerDesc);
                 mv.visitVarInsn(ALOAD, 1);
@@ -128,7 +131,7 @@ public class HttpContext extends Context {
                 mv.visitMaxs(3, 3);
                 mv.visitEnd();
             } else if (handlerinterface || java.lang.reflect.Modifier.isAbstract(method.getModifiers())) {
-                mv = new AsmMethodVisitor(cw.visitMethod(ACC_PUBLIC, method.getName(), Type.getMethodDescriptor(method), null, null));
+                mv = new MethodDebugVisitor(cw.visitMethod(ACC_PUBLIC, method.getName(), Type.getMethodDescriptor(method), null, null));
                 Class returnType = method.getReturnType();
                 if (returnType == void.class) {
                     mv.visitInsn(RETURN);
